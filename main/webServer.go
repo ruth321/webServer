@@ -104,22 +104,21 @@ func sortByParentWithChildren(grs []group) []group {
 			if grs[i].ParentID == grs[g].GroupID {
 				if g+1 == i {
 					break
-				} else {
-					gr = grs[i]
-					if i < g {
-						for j := i; j < g; j++ {
-							grs[j] = grs[j+1]
-						}
-						grs[g] = gr
-					} else {
-						for j := i; j > g+1; j-- {
-							grs[j] = grs[j-1]
-						}
-						grs[g+1] = gr
-					}
-					i--
-					break
 				}
+				gr = grs[i]
+				if i < g {
+					for j := i; j < g; j++ {
+						grs[j] = grs[j+1]
+					}
+					grs[g] = gr
+				} else {
+					for j := i; j > g+1; j-- {
+						grs[j] = grs[j-1]
+					}
+					grs[g+1] = gr
+				}
+				i--
+				break
 			}
 		}
 	}
