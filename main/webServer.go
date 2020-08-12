@@ -16,19 +16,17 @@ type group struct {
 	ParentID    int    `json:"parent_id"`
 }
 
-type groups []group
-
 type task struct {
 }
 
 var taskGroups = readGroups()
 
-func readGroups() groups {
+func readGroups() []group {
 	groupsFile, err := ioutil.ReadFile("groups.json")
 	if err != nil {
 		log.Fatal(err)
 	}
-	var groups groups
+	var groups []group
 	err = json.Unmarshal(groupsFile, &groups)
 	if err != nil {
 		log.Fatal(err)
@@ -46,14 +44,15 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getSortedGroups(g groups, s string, l string) groups {
+func getSortedGroups(g []group, s string, l string) []group {
+	var newGroups []group
 	switch s {
 	case "name":
-		g.sortByName(0, len(g))
+		newGroups = sortByName(g, 0, len(g))
 	case "parents_first":
-		g.sortByParentsFirst()
+		newGroups = sortByParentsFirst(g)
 	case "parent_with_children":
-		g.sortByParentWithChildren()
+		newGroups = sortByParentWithChildren(g)
 	}
 	lim, err := strconv.Atoi(l)
 	if err != nil || lim < 0 {
@@ -62,58 +61,85 @@ func getSortedGroups(g groups, s string, l string) groups {
 	if lim > len(g) {
 		lim = len(g)
 	}
-	g = g[:lim]
-	return g
+	newGroups = newGroups[:lim]
+	return newGroups
 }
 
-func (grs *groups) sortByName(s int, e int) {
+func sortByName(grs []group, s int, e int) []group {
 	for i := s + 1; i < e; i++ {
-		if (*grs)[i].Name < (*grs)[i-1].Name {
-			gr := (*grs)[i]
+		if grs[i].Name < grs[i-1].Name {
+			gr := grs[i]
 			g := i
-			for g > 0 && gr.Name < (*grs)[g-1].Name {
-				(*grs)[g] = (*grs)[g-1]
+			for g > 0 && gr.Name < grs[g-1].Name {
+				grs[g] = grs[g-1]
 				g--
 			}
-			(*grs)[g] = gr
+			grs[g] = gr
 		}
 	}
+	return grs
 }
 
-func (grs *groups) sortByParentsFirst() {
+func sortByParentsFirst(grs []group) []group {
 	parentID := 0
 	c := 0
-	for i := 0; i < len(*grs); i++ {
+	for i := 0; i < len(grs); i++ {
 		s := c
-		for g := c; g < len(*grs); g++ {
-			if parentID == (*grs)[g].ParentID {
-				(*grs)[c], (*grs)[g] = (*grs)[g], (*grs)[c]
+		for g := c; g < len(grs); g++ {
+			if parentID == grs[g].ParentID {
+				grs[c], grs[g] = grs[g], grs[c]
 				c++
 			}
 		}
-		(*grs).sortByName(s, c)
-		parentID = (*grs)[i].GroupID
+		grs = sortByName(grs, s, c)
+		parentID = grs[i].GroupID
 	}
+	return grs
 }
 
-func (grs *groups) sortByParentWithChildren() {
-
+func sortByParentWithChildren(grs []group) []group {
+	var gr group
+	for i := 0; i < len(grs); i++ {
+		for g := 0; g < len(grs); g++ {
+			if grs[i].ParentID == grs[g].GroupID {
+				if g+1 == i {
+					break
+				} else {
+					gr = grs[i]
+					if i < g {
+						for j := i; j < g; j++ {
+							grs[j] = grs[j+1]
+						}
+						grs[g] = gr
+					} else {
+						for j := i; j > g+1; j-- {
+							grs[j] = grs[j-1]
+						}
+						grs[g+1] = gr
+					}
+					i--
+					break
+				}
+			}
+		}
+	}
+	return grs
 }
 
-func getTopParents(grs groups) groups {
-	var topParents groups
+func getTopParents(grs []group) []group {
+	var topParents []group
 	for i := 0; i < len(grs); i++ {
 		if grs[i].ParentID == 0 {
 			topParents = append(topParents, grs[i])
 		}
 	}
-	grs.sortByName(0, len(grs))
+	grs = sortByName(grs, 0, len(grs))
 	return topParents
 }
 
 func main() {
 	r := mux.NewRouter()
-	r.HandleFunc("/groups/", groupsHandler)
+	r.HandleFunc("/groups", groupsHandler)
 	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
