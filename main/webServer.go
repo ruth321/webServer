@@ -99,30 +99,43 @@ func sortByParentsFirst(grs []group) []group {
 
 func sortByParentWithChildren(grs []group) []group {
 	var gr group
-	for i := 0; i < len(grs); i++ {
-		for g := 0; g < len(grs); g++ {
-			if grs[i].ParentID == grs[g].GroupID {
-				if g+1 == i {
+	var aGrs []group
+	for k := 0; k < len(grs); k++ {
+		for i := 0; i < len(grs); i++ {
+			for g := 0; g < len(grs); g++ {
+				if grs[i].ParentID == grs[g].GroupID {
+					if contains(aGrs, grs[i]) {
+						continue
+					}
+					gr = grs[i]
+					if i < g {
+						for j := i; j < g; j++ {
+							grs[j] = grs[j+1]
+						}
+						grs[g] = gr
+					} else {
+						for j := i; j > g+1; j-- {
+							grs[j] = grs[j-1]
+						}
+						grs[g+1] = gr
+					}
+					aGrs = append(aGrs, gr)
+					i--
 					break
 				}
-				gr = grs[i]
-				if i < g {
-					for j := i; j < g; j++ {
-						grs[j] = grs[j+1]
-					}
-					grs[g] = gr
-				} else {
-					for j := i; j > g+1; j-- {
-						grs[j] = grs[j-1]
-					}
-					grs[g+1] = gr
-				}
-				i--
-				break
 			}
 		}
 	}
 	return grs
+}
+
+func contains(grs []group, gr group) bool {
+	for i := 0; i < len(grs); i++ {
+		if gr == grs[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func getTopParents(grs []group) []group {
