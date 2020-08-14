@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/gorilla/mux"
-	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -179,6 +179,10 @@ func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	children := getChildren(taskGroups, ID)
+	if children == nil {
+		http.Error(w, "Has no children", http.StatusBadRequest)
+		return
+	}
 	err = json.NewEncoder(w).Encode(children)
 	if err != nil {
 		log.Fatal(err)
@@ -213,11 +217,15 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	case "PUT":
-		renderTemplate(w, "group", &gr)
 	case "DELETE":
 		taskGroups, err = removeGroup(taskGroups, ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			_, err = fmt.Fprint(w, "Group deleted")
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -237,12 +245,21 @@ func getGroup(grs []group, id int) group {
 }
 
 func removeGroup(grs []group, id int) ([]group, error) {
-	if getChildren(taskGroups, id) != nil {
-		return nil, errors.New("has dependent groups")
+	if getChildren(grs, id) != nil {
+		return grs, errors.New("has dependent groups")
 	}
 	if getTasks(tasks, id) != nil {
-		return nil, errors.New("has dependent tasks")
+		return grs, errors.New("has dependent tasks")
 	}
+	for i := 0; i < len(grs); i++ {
+		if grs[i].GroupID == id {
+			for g := i; g < len(grs)-1; g++ {
+				grs[g] = grs[g+1]
+			}
+			break
+		}
+	}
+	grs = grs[:len(grs)-1]
 	return grs, nil
 }
 
@@ -355,12 +372,37 @@ func removeTask(ts []task, n int) []task {
 	return ts
 }
 
-var templates = template.Must(template.ParseFiles("group.html", "task.html"))
-
-func renderTemplate(w http.ResponseWriter, tmpl string, g *group) {
-	err := templates.ExecuteTemplate(w, tmpl+".html", g)
+func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
+	if method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	vars := mux.Vars(r)
+	ID, err := strconv.Atoi(vars["id"])
+	if err != nil || !contains(taskGroups, ID) {
+		http.NotFound(w, r)
+		return
+	}
+	newTasks := getTasks(tasks, ID)
+	if newTasks == nil {
+		http.Error(w, "Has no dependent tasks", http.StatusBadRequest)
+		return
+	}
+	t := r.URL.Query().Get("type")
+	switch t {
+	case "completed":
+		newTasks = getCompletedTasks(newTasks)
+	case "working":
+		newTasks = getWorkingTasks(newTasks)
+	}
+	if len(newTasks) == 0 {
+		http.Error(w, "Has no dependent tasks of this type", http.StatusBadRequest)
+		return
+	}
+	err = json.NewEncoder(w).Encode(newTasks)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Fatal(err)
 	}
 }
 
@@ -371,6 +413,7 @@ func main() {
 	r.HandleFunc("/groups/children/{id:[0-9]+}", groupsChildrenHandler)
 	r.HandleFunc("/groups/{id:[0-9]+}", groupsHandler)
 	r.HandleFunc("/tasks", tasksListHandler)
+	r.HandleFunc("/tasks/group/{id:[0-9]+}", groupTasksHandler)
 	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
