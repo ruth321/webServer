@@ -2,12 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/gorilla/mux"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
-	"time"
 )
 
 type group struct {
@@ -18,12 +19,12 @@ type group struct {
 }
 
 type task struct {
-	TaskID        string    `json:"task_id"`
-	GroupID       int       `json:"group_id"`
-	Task          string    `json:"task"`
-	Completed     bool      `json:"completed"`
-	CreatedDate   time.Time `json:"created_at"`
-	CompletedDate time.Time `json:"completed_at"`
+	TaskID        string `json:"task_id"`
+	GroupID       int    `json:"group_id"`
+	Task          string `json:"task"`
+	Completed     bool   `json:"completed"`
+	CreatedDate   string `json:"created_at"`
+	CompletedDate string `json:"completed_at"`
 }
 
 var taskGroups = readGroups()
@@ -79,7 +80,7 @@ func getSortedGroups(g []group, s string, l string) []group {
 	case "parents_first":
 		newGroups = sortByParentsFirst(g)
 	case "parent_with_children":
-		newGroups = sortByParentWithChildren(g)
+		newGroups = sortByParentWithChildren(g, 0)
 	default:
 		newGroups = g
 	}
@@ -126,67 +127,133 @@ func sortByParentsFirst(grs []group) []group {
 	return grs
 }
 
-func sortByParentWithChildren(grs []group) []group {
-	var gr group
-	var aGrs []group
-	for k := 0; k < len(grs); k++ {
-		for i := 0; i < len(grs); i++ {
-			for g := 0; g < len(grs); g++ {
-				if grs[i].ParentID == grs[g].GroupID {
-					if contains(aGrs, grs[i]) {
-						continue
-					}
-					gr = grs[i]
-					if i < g {
-						for j := i; j < g; j++ {
-							grs[j] = grs[j+1]
-						}
-						grs[g] = gr
-					} else {
-						for j := i; j > g+1; j-- {
-							grs[j] = grs[j-1]
-						}
-						grs[g+1] = gr
-					}
-					aGrs = append(aGrs, gr)
-					i--
-					break
-				}
-			}
+func sortByParentWithChildren(grs []group, id int) []group {
+	var children []group
+	for i := 0; i < len(grs); i++ {
+		if grs[i].ParentID == id {
+			children = append(children, grs[i])
+			children = append(children, sortByParentWithChildren(grs, grs[i].GroupID)...)
 		}
 	}
-	return grs
+	return children
 }
 
-func contains(grs []group, gr group) bool {
+func contains(grs []group, id int) bool {
 	for i := 0; i < len(grs); i++ {
-		if gr == grs[i] {
+		if id == grs[i].GroupID {
 			return true
 		}
 	}
 	return false
 }
 
-func getTopParents(grs []group) []group {
+func topParentsHandler(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
+	if method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var topParents []group
-	for i := 0; i < len(grs); i++ {
-		if grs[i].ParentID == 0 {
-			topParents = append(topParents, grs[i])
+	for i := 0; i < len(taskGroups); i++ {
+		if taskGroups[i].ParentID == 0 {
+			topParents = append(topParents, taskGroups[i])
 		}
 	}
-	grs = sortGroupsByName(grs, 0, len(grs))
-	return topParents
+	topParents = sortGroupsByName(topParents, 0, len(topParents))
+	err := json.NewEncoder(w).Encode(topParents)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
+	if method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	vars := mux.Vars(r)
+	ID, err := strconv.Atoi(vars["id"])
+	if err != nil || !contains(taskGroups, ID) {
+		http.NotFound(w, r)
+		return
+	}
+	children := getChildren(taskGroups, ID)
+	err = json.NewEncoder(w).Encode(children)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func getChildren(grs []group, id int) []group {
+	var children []group
+	for i := 0; i < len(grs); i++ {
+		if grs[i].ParentID == id {
+			children = append(children, grs[i])
+		}
+	}
+	return children
 }
 
 func groupsHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	ID, err := strconv.Atoi(vars["id"])
+	if err != nil || !contains(taskGroups, ID) {
+		http.NotFound(w, r)
+		return
+	}
+	var gr group
 	method := r.Method
 	switch method {
 	case "GET":
-	case "POST":
+		gr = getGroup(taskGroups, ID)
+		err = json.NewEncoder(w).Encode(gr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
 	case "PUT":
+		renderTemplate(w, "group", &gr)
 	case "DELETE":
-
+		taskGroups, err = removeGroup(taskGroups, ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
+}
+
+func getGroup(grs []group, id int) group {
+	var gr group
+	for i := 0; i < len(grs); i++ {
+		if grs[i].GroupID == id {
+			gr = grs[i]
+			break
+		}
+	}
+	return gr
+}
+
+func removeGroup(grs []group, id int) ([]group, error) {
+	if getChildren(taskGroups, id) != nil {
+		return nil, errors.New("has dependent groups")
+	}
+	if getTasks(tasks, id) != nil {
+		return nil, errors.New("has dependent tasks")
+	}
+	return grs, nil
+}
+
+func getTasks(t []task, id int) []task {
+	var newTasks []task
+	for i := 0; i < len(t); i++ {
+		if t[i].GroupID == id {
+			newTasks = append(newTasks, t[i])
+		}
+	}
+	return newTasks
 }
 
 func tasksListHandler(w http.ResponseWriter, r *http.Request) {
@@ -223,17 +290,17 @@ func getSortedTasks(ts []task, s string, l string, t string) []task {
 	}
 	lim, err := strconv.Atoi(l)
 	if err != nil || lim < 0 {
-		return ts
+		return newTasks
 	}
-	if lim > len(ts) {
-		lim = len(ts)
+	if lim > len(newTasks) {
+		lim = len(newTasks)
 	}
 	newTasks = newTasks[:lim]
 	return newTasks
 }
 
 func sortTasksByName(ts []task) []task {
-	for i := 0; i < len(ts); i++ {
+	for i := 1; i < len(ts); i++ {
 		if ts[i].Task < ts[i-1].Task {
 			t := ts[i]
 			g := i
@@ -248,7 +315,7 @@ func sortTasksByName(ts []task) []task {
 }
 
 func sortTasksByGroup(ts []task) []task {
-	for i := 0; i < len(ts); i++ {
+	for i := 1; i < len(ts); i++ {
 		if ts[i].GroupID < ts[i-1].GroupID {
 			t := ts[i]
 			g := i
@@ -288,11 +355,22 @@ func removeTask(ts []task, n int) []task {
 	return ts
 }
 
+var templates = template.Must(template.ParseFiles("group.html", "task.html"))
+
+func renderTemplate(w http.ResponseWriter, tmpl string, g *group) {
+	err := templates.ExecuteTemplate(w, tmpl+".html", g)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/groups", groupsListHandler)
-	r.HandleFunc("/groups/", groupsHandler)
+	r.HandleFunc("/groups/top_parents", topParentsHandler)
+	r.HandleFunc("/groups/children/{id:[0-9]+}", groupsChildrenHandler)
+	r.HandleFunc("/groups/{id:[0-9]+}", groupsHandler)
 	r.HandleFunc("/tasks", tasksListHandler)
-	r.Handle("/", r)
+	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
