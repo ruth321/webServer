@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -36,6 +37,8 @@ type statistics struct {
 	Completed int
 	Created   int
 }
+
+var gn int
 
 var taskGroups = readGroups()
 
@@ -249,6 +252,9 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	case "PUT":
+		n := getGroupNumByID(taskGroups, ID)
+		gn = n
+		renderTemplate(w, "groupEdit", &taskGroups[n])
 	case "DELETE":
 		taskGroups, err = removeGroup(taskGroups, ID)
 		if err != nil {
@@ -263,6 +269,17 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+}
+
+func getGroupNumByID(grs []group, id int) int {
+	var n int
+	for i := 0; i < len(grs); i++ {
+		if grs[i].GroupID == id {
+			n = i
+			break
+		}
+	}
+	return n
 }
 
 func getGroup(grs []group, id int) group {
@@ -293,6 +310,118 @@ func removeGroup(grs []group, id int) ([]group, error) {
 	}
 	grs = grs[:len(grs)-1]
 	return grs, nil
+}
+
+func saveEditedGroupHandler(w http.ResponseWriter, r *http.Request) {
+	//name := r.FormValue("name")
+	//description := r.FormValue("description")
+	//groupID, err := strconv.Atoi(r.FormValue("group_id"))
+	//if err != nil {
+	//	http.Error(w, "400 invalid group ID", http.StatusBadRequest)
+	//	return
+	//}
+	//if taskGroups[gn].GroupID != groupID {
+	//	if containsGroup(taskGroups, groupID) {
+	//		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
+	//		return
+	//	}
+	//}
+	//parentID, err := strconv.Atoi(r.FormValue("parent_id"))
+	//if err != nil {
+	//	http.Error(w, "400 invalid parent ID", http.StatusBadRequest)
+	//	return
+	//}
+	//if !containsGroup(taskGroups, parentID) && parentID != 0 {
+	//	http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
+	//	return
+	//}
+	//taskGroups[gn] = group{
+	//	Name:        name,
+	//	Description: description,
+	//	GroupID:     groupID,
+	//	ParentID:    parentID,
+	//}
+	var gr group
+	err := json.NewDecoder(r.Body).Decode(&gr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if taskGroups[gn].GroupID != gr.GroupID && containsGroup(taskGroups, gr.GroupID) {
+		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
+		return
+	}
+	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != 0 {
+		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
+		return
+	}
+	taskGroups[gn] = gr
+	(*r).Method = "GET"
+	http.Redirect(w, r, "/groups/"+strconv.Itoa(gr.GroupID), http.StatusOK)
+}
+
+func newGroupHandler(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
+	if method != "POST" {
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var g group
+	renderTemplate(w, "groupNew", &g)
+}
+
+func saveNewGroupHandler(w http.ResponseWriter, r *http.Request) {
+	//name := r.FormValue("name")
+	//description := r.FormValue("description")
+	//if err != nil {
+	//	http.Error(w, err.Error(), http.StatusBadRequest)
+	//	return
+	//}
+	//groupID, err := strconv.Atoi(r.FormValue("group_id"))
+	//if err != nil {
+	//	http.Error(w, "400 invalid group ID", http.StatusBadRequest)
+	//	return
+	//}
+	//if containsGroup(taskGroups, groupID) {
+	//	http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
+	//	return
+	//}
+	//parentID, err := strconv.Atoi(r.FormValue("parent_id"))
+	//if err != nil {
+	//	http.Error(w, "400 invalid parent ID", http.StatusBadRequest)
+	//	return
+	//}
+	//if !containsGroup(taskGroups, parentID) && parentID != 0 {
+	//	http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
+	//	return
+	//}
+	//gr := group{
+	//	Name:        name,
+	//	Description: description,
+	//	GroupID:     groupID,
+	//	ParentID:    parentID,
+	//}
+	//taskGroups = append(taskGroups, gr)
+	//err = json.NewEncoder(w).Encode(gr)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	var gr group
+	err := json.NewDecoder(r.Body).Decode(&gr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if containsGroup(taskGroups, gr.GroupID) {
+		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
+		return
+	}
+	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != 0 {
+		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
+		return
+	}
+	taskGroups = append(taskGroups, gr)
+	http.Redirect(w, r, "/groups/"+strconv.Itoa(gr.GroupID), http.StatusOK)
 }
 
 func getTasksByGroupID(t []task, id int) []task {
@@ -576,6 +705,15 @@ func getStat(ts []task, period string) (statistics, error) {
 	return s, nil
 }
 
+var templates = template.Must(template.ParseFiles("groupEdit.html", "groupNew.html"))
+
+func renderTemplate(w http.ResponseWriter, tmpl string, g *group) {
+	err := templates.ExecuteTemplate(w, tmpl+".html", g)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func main() {
 	var wait time.Duration
 	flag.DurationVar(&wait, "graceful-timeout", time.Second*15, "the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
@@ -584,7 +722,10 @@ func main() {
 	r.HandleFunc("/groups", groupsListHandler)
 	r.HandleFunc("/groups/top_parents", topParentsHandler)
 	r.HandleFunc("/groups/children/{id:[0-9]+}", groupsChildrenHandler)
+	r.HandleFunc("/groups/new", newGroupHandler)
 	r.HandleFunc("/groups/{id:[0-9]+}", groupsHandler)
+	r.HandleFunc("/groups/new/save", saveNewGroupHandler)
+	r.HandleFunc("/groups/save", saveEditedGroupHandler)
 	r.HandleFunc("/tasks", tasksListHandler)
 	r.HandleFunc("/tasks/group/{id:[0-9]+}", groupTasksHandler)
 	r.HandleFunc("/tasks/{id:[a-zA-Z0-9]+}", taskHandler)
