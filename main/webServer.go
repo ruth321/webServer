@@ -92,7 +92,7 @@ func writeTasks(ts []task) {
 func groupsListHandler(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	if method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	l := r.URL.Query().Get("limit")
@@ -170,7 +170,7 @@ func sortByParentWithChildren(grs []group, id int) []group {
 	return children
 }
 
-func contains(grs []group, id int) bool {
+func containsGroup(grs []group, id int) bool {
 	for i := 0; i < len(grs); i++ {
 		if id == grs[i].GroupID {
 			return true
@@ -182,7 +182,7 @@ func contains(grs []group, id int) bool {
 func topParentsHandler(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	if method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var topParents []group
@@ -201,18 +201,18 @@ func topParentsHandler(w http.ResponseWriter, r *http.Request) {
 func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	if method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
-	if err != nil || !contains(taskGroups, ID) {
+	if err != nil || !containsGroup(taskGroups, ID) {
 		http.NotFound(w, r)
 		return
 	}
 	children := getChildren(taskGroups, ID)
 	if children == nil {
-		http.Error(w, "Has no children", http.StatusBadRequest)
+		http.Error(w, "400 has no children", http.StatusBadRequest)
 		return
 	}
 	err = json.NewEncoder(w).Encode(children)
@@ -234,7 +234,7 @@ func getChildren(grs []group, id int) []group {
 func groupsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
-	if err != nil || !contains(taskGroups, ID) {
+	if err != nil || !containsGroup(taskGroups, ID) {
 		http.NotFound(w, r)
 		return
 	}
@@ -260,7 +260,7 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 }
@@ -280,7 +280,7 @@ func removeGroup(grs []group, id int) ([]group, error) {
 	if getChildren(grs, id) != nil {
 		return grs, errors.New("has dependent groups")
 	}
-	if getTasks(tasks, id) != nil {
+	if getTasksByGroupID(tasks, id) != nil {
 		return grs, errors.New("has dependent tasks")
 	}
 	for i := 0; i < len(grs); i++ {
@@ -295,7 +295,7 @@ func removeGroup(grs []group, id int) ([]group, error) {
 	return grs, nil
 }
 
-func getTasks(t []task, id int) []task {
+func getTasksByGroupID(t []task, id int) []task {
 	var newTasks []task
 	for i := 0; i < len(t); i++ {
 		if t[i].GroupID == id {
@@ -308,7 +308,7 @@ func getTasks(t []task, id int) []task {
 func tasksListHandler(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	if method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	l := r.URL.Query().Get("limit")
@@ -407,18 +407,18 @@ func removeTask(ts []task, n int) []task {
 func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	if method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
-	if err != nil || !contains(taskGroups, ID) {
+	if err != nil || !containsGroup(taskGroups, ID) {
 		http.NotFound(w, r)
 		return
 	}
-	newTasks := getTasks(tasks, ID)
+	newTasks := getTasksByGroupID(tasks, ID)
 	if newTasks == nil {
-		http.Error(w, "Has no dependent tasks", http.StatusBadRequest)
+		http.Error(w, "400 has no dependent tasks", http.StatusBadRequest)
 		return
 	}
 	t := r.URL.Query().Get("type")
@@ -429,7 +429,7 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 		newTasks = getWorkingTasks(newTasks)
 	}
 	if len(newTasks) == 0 {
-		http.Error(w, "Has no dependent tasks of this type", http.StatusBadRequest)
+		http.Error(w, "400 has no dependent tasks of this type", http.StatusBadRequest)
 		return
 	}
 	err = json.NewEncoder(w).Encode(newTasks)
@@ -438,13 +438,84 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func taskHandler(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
+	if method != "PUT" {
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	vars := mux.Vars(r)
+	if !containsTask(tasks, vars["id"]) {
+		http.NotFound(w, r)
+		return
+	}
+	f := r.URL.Query().Get("finished")
+	var err error
+	switch f {
+	case "true":
+		tasks, err = changeTaskType(tasks, vars["id"], true)
+	case "false":
+		tasks, err = changeTaskType(tasks, vars["id"], false)
+	case "":
+	default:
+		http.Error(w, "400 bad request", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	t := getTask(tasks, vars["id"])
+	err = json.NewEncoder(w).Encode(t)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func getTask(ts []task, id string) task {
+	var t task
+	for i := 0; i < len(ts); i++ {
+		if ts[i].TaskID == id {
+			t = ts[i]
+			break
+		}
+	}
+	return t
+}
+
+func changeTaskType(ts []task, id string, t bool) ([]task, error) {
+	for i := 0; i < len(ts); i++ {
+		if ts[i].TaskID == id {
+			if t == ts[i].Completed {
+				return ts, errors.New("400 already of this type")
+			}
+			ts[i].Completed = t
+			if t {
+				ts[i].CompletedDate = time.Now().Format(time.RFC3339Nano)
+			} else {
+				ts[i].CompletedDate = ""
+			}
+			break
+		}
+	}
+	return ts, nil
+}
+
+func containsTask(ts []task, id string) bool {
+	for i := 0; i < len(ts); i++ {
+		if ts[i].TaskID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func statHandler(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 	if method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	vars := mux.Vars(r)
 	stat, err := getStat(tasks, vars["period"])
 	if err != nil {
@@ -516,6 +587,7 @@ func main() {
 	r.HandleFunc("/groups/{id:[0-9]+}", groupsHandler)
 	r.HandleFunc("/tasks", tasksListHandler)
 	r.HandleFunc("/tasks/group/{id:[0-9]+}", groupTasksHandler)
+	r.HandleFunc("/tasks/{id:[a-zA-Z0-9]+}", taskHandler)
 	r.HandleFunc("/stat/{period}", statHandler)
 	http.Handle("/", r)
 	srv := &http.Server{
