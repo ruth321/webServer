@@ -32,6 +32,11 @@ type task struct {
 	CompletedDate string `json:"completed_at"`
 }
 
+type statistics struct {
+	Completed int
+	Created   int
+}
+
 var taskGroups = readGroups()
 
 var tasks = readTasks()
@@ -433,6 +438,73 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func statHandler(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
+	if method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	vars := mux.Vars(r)
+	stat, err := getStat(tasks, vars["period"])
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	err = json.NewEncoder(w).Encode(stat)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func getStat(ts []task, period string) (statistics, error) {
+	var s statistics
+	n := time.Now()
+	var periodStart time.Time
+	var periodEnd time.Time
+	switch period {
+	case "today":
+		periodStart = n.Add(-time.Hour)
+		periodStart = time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, n.Location())
+		periodEnd = n
+	case "yesterday":
+		periodStart = time.Date(n.Year(), n.Month(), n.Day()-1, 0, 0, 0, 0, n.Location())
+		periodEnd = time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, n.Location())
+	case "week":
+		periodStart = time.Date(n.Year(), n.Month(), n.Day()-7, n.Hour(), n.Minute(), n.Second(), n.Nanosecond(), n.Location())
+		periodEnd = n
+	case "month":
+		periodStart = time.Date(n.Year(), n.Month()-1, n.Day(), n.Hour(), n.Minute(), n.Second(), n.Nanosecond(), n.Location())
+		periodEnd = n
+	default:
+		return statistics{0, 0}, errors.New("not found")
+	}
+	var createdDate time.Time
+	var completedDate time.Time
+	var err error
+	for i := 0; i < len(ts); i++ {
+		createdDate, err = time.Parse(time.RFC3339Nano, ts[i].CreatedDate)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if ts[i].CompletedDate == "" {
+			completedDate = n
+		} else {
+			completedDate, err = time.Parse(time.RFC3339Nano, ts[i].CompletedDate)
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		if createdDate.Before(periodEnd) && createdDate.After(periodStart) {
+			s.Created++
+		}
+		if completedDate.Before(periodEnd) && completedDate.After(periodStart) {
+			s.Completed++
+		}
+	}
+	return s, nil
+}
+
 func main() {
 	var wait time.Duration
 	flag.DurationVar(&wait, "graceful-timeout", time.Second*15, "the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
@@ -444,6 +516,7 @@ func main() {
 	r.HandleFunc("/groups/{id:[0-9]+}", groupsHandler)
 	r.HandleFunc("/tasks", tasksListHandler)
 	r.HandleFunc("/tasks/group/{id:[0-9]+}", groupTasksHandler)
+	r.HandleFunc("/stat/{period}", statHandler)
 	http.Handle("/", r)
 	srv := &http.Server{
 		Addr:         "0.0.0.0:8080",
