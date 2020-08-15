@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"time"
 )
 
 type group struct {
@@ -44,6 +49,17 @@ func readGroups() []group {
 	return groups
 }
 
+func writeGroups(grs []group) {
+	groupsFile, err := json.Marshal(grs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ioutil.WriteFile("groups.json", groupsFile, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func readTasks() []task {
 	tasksFile, err := ioutil.ReadFile("tasks.json")
 	if err != nil {
@@ -55,6 +71,17 @@ func readTasks() []task {
 		log.Fatal(err)
 	}
 	return newTasks
+}
+
+func writeTasks(ts []task) {
+	tasksFile, err := json.Marshal(ts)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ioutil.WriteFile("tasks.json", tasksFile, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func groupsListHandler(w http.ResponseWriter, r *http.Request) {
@@ -407,6 +434,9 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	var wait time.Duration
+	flag.DurationVar(&wait, "graceful-timeout", time.Second*15, "the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
+	flag.Parse()
 	r := mux.NewRouter()
 	r.HandleFunc("/groups", groupsListHandler)
 	r.HandleFunc("/groups/top_parents", topParentsHandler)
@@ -415,5 +445,29 @@ func main() {
 	r.HandleFunc("/tasks", tasksListHandler)
 	r.HandleFunc("/tasks/group/{id:[0-9]+}", groupTasksHandler)
 	http.Handle("/", r)
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	srv := &http.Server{
+		Addr:         "0.0.0.0:8080",
+		WriteTimeout: time.Second * 15,
+		ReadTimeout:  time.Second * 15,
+		IdleTimeout:  time.Second * 60,
+		Handler:      r,
+	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			log.Println(err)
+		}
+	}()
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	<-c
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	err := srv.Shutdown(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	writeGroups(taskGroups)
+	writeTasks(tasks)
+	log.Println("shutting down")
+	os.Exit(0)
 }
