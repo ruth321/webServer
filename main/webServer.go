@@ -274,6 +274,9 @@ func groupEditHandler(w http.ResponseWriter, r *http.Request) {
 	n := getGroupNumByID(taskGroups, ID)
 	taskGroups[n] = gr
 	err = json.NewEncoder(w).Encode(gr)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func getGroupNumByID(grs []group, id int) int {
@@ -342,6 +345,9 @@ func newGroupHandler(w http.ResponseWriter, r *http.Request) {
 	gr.GroupID = getMaxID(taskGroups) + 1
 	taskGroups = append(taskGroups, gr)
 	err = json.NewEncoder(w).Encode(gr)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func getMaxID(grs []group) int {
