@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
-	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -37,8 +38,6 @@ type statistics struct {
 	Completed int
 	Created   int
 }
-
-var gn int
 
 var taskGroups = readGroups()
 
@@ -93,11 +92,6 @@ func writeTasks(ts []task) {
 }
 
 func groupsListHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "GET" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	l := r.URL.Query().Get("limit")
 	s := r.URL.Query().Get("sort")
 	newGroups := getSortedGroups(taskGroups, s, l)
@@ -183,11 +177,6 @@ func containsGroup(grs []group, id int) bool {
 }
 
 func topParentsHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "GET" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var topParents []group
 	for i := 0; i < len(taskGroups); i++ {
 		if taskGroups[i].ParentID == 0 {
@@ -202,11 +191,6 @@ func topParentsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "GET" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -234,7 +218,31 @@ func getChildren(grs []group, id int) []group {
 	return children
 }
 
-func groupsHandler(w http.ResponseWriter, r *http.Request) {
+func getGroup(grs []group, id int) group {
+	var gr group
+	for i := 0; i < len(grs); i++ {
+		if grs[i].GroupID == id {
+			gr = grs[i]
+			break
+		}
+	}
+	return gr
+}
+
+func groupShowHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	ID, err := strconv.Atoi(vars["id"])
+	if err != nil || !containsGroup(taskGroups, ID) {
+		http.NotFound(w, r)
+		return
+	}
+	err = json.NewEncoder(w).Encode(getGroup(taskGroups, ID))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func groupEditHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -242,33 +250,30 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var gr group
-	method := r.Method
-	switch method {
-	case "GET":
-		gr = getGroup(taskGroups, ID)
-		err = json.NewEncoder(w).Encode(gr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		return
-	case "PUT":
-		n := getGroupNumByID(taskGroups, ID)
-		gn = n
-		renderTemplate(w, "groupEdit", &taskGroups[n])
-	case "DELETE":
-		taskGroups, err = removeGroup(taskGroups, ID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			_, err = fmt.Fprint(w, "Group deleted")
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-	default:
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
+	err = json.NewDecoder(r.Body).Decode(&gr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if containsGroup(taskGroups, gr.GroupID) && gr.GroupID != ID {
+		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
+		return
+	}
+	if getChildren(taskGroups, ID) != nil && gr.GroupID != ID {
+		http.Error(w, "400 has dependent groups", http.StatusBadRequest)
+		return
+	}
+	if getTasksByGroupID(tasks, ID) != nil && gr.GroupID != ID {
+		http.Error(w, "400 has dependent tasks", http.StatusBadRequest)
+		return
+	}
+	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != 0 {
+		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
+		return
+	}
+	n := getGroupNumByID(taskGroups, ID)
+	taskGroups[n] = gr
+	err = json.NewEncoder(w).Encode(gr)
 }
 
 func getGroupNumByID(grs []group, id int) int {
@@ -282,15 +287,22 @@ func getGroupNumByID(grs []group, id int) int {
 	return n
 }
 
-func getGroup(grs []group, id int) group {
-	var gr group
-	for i := 0; i < len(grs); i++ {
-		if grs[i].GroupID == id {
-			gr = grs[i]
-			break
+func groupDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	ID, err := strconv.Atoi(vars["id"])
+	if err != nil || !containsGroup(taskGroups, ID) {
+		http.NotFound(w, r)
+		return
+	}
+	taskGroups, err = removeGroup(taskGroups, ID)
+	if err != nil {
+		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
+	} else {
+		_, err = fmt.Fprint(w, "group deleted")
+		if err != nil {
+			log.Fatal(err)
 		}
 	}
-	return gr
 }
 
 func removeGroup(grs []group, id int) ([]group, error) {
@@ -312,116 +324,34 @@ func removeGroup(grs []group, id int) ([]group, error) {
 	return grs, nil
 }
 
-func saveEditedGroupHandler(w http.ResponseWriter, r *http.Request) {
-	//name := r.FormValue("name")
-	//description := r.FormValue("description")
-	//groupID, err := strconv.Atoi(r.FormValue("group_id"))
-	//if err != nil {
-	//	http.Error(w, "400 invalid group ID", http.StatusBadRequest)
-	//	return
-	//}
-	//if taskGroups[gn].GroupID != groupID {
-	//	if containsGroup(taskGroups, groupID) {
-	//		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
-	//		return
-	//	}
-	//}
-	//parentID, err := strconv.Atoi(r.FormValue("parent_id"))
-	//if err != nil {
-	//	http.Error(w, "400 invalid parent ID", http.StatusBadRequest)
-	//	return
-	//}
-	//if !containsGroup(taskGroups, parentID) && parentID != 0 {
-	//	http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
-	//	return
-	//}
-	//taskGroups[gn] = group{
-	//	Name:        name,
-	//	Description: description,
-	//	GroupID:     groupID,
-	//	ParentID:    parentID,
-	//}
-	var gr group
-	err := json.NewDecoder(r.Body).Decode(&gr)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if taskGroups[gn].GroupID != gr.GroupID && containsGroup(taskGroups, gr.GroupID) {
-		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
-		return
-	}
-	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != 0 {
-		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
-		return
-	}
-	taskGroups[gn] = gr
-	(*r).Method = "GET"
-	http.Redirect(w, r, "/groups/"+strconv.Itoa(gr.GroupID), http.StatusOK)
-}
-
 func newGroupHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "POST" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var g group
-	renderTemplate(w, "groupNew", &g)
-}
-
-func saveNewGroupHandler(w http.ResponseWriter, r *http.Request) {
-	//name := r.FormValue("name")
-	//description := r.FormValue("description")
-	//if err != nil {
-	//	http.Error(w, err.Error(), http.StatusBadRequest)
-	//	return
-	//}
-	//groupID, err := strconv.Atoi(r.FormValue("group_id"))
-	//if err != nil {
-	//	http.Error(w, "400 invalid group ID", http.StatusBadRequest)
-	//	return
-	//}
-	//if containsGroup(taskGroups, groupID) {
-	//	http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
-	//	return
-	//}
-	//parentID, err := strconv.Atoi(r.FormValue("parent_id"))
-	//if err != nil {
-	//	http.Error(w, "400 invalid parent ID", http.StatusBadRequest)
-	//	return
-	//}
-	//if !containsGroup(taskGroups, parentID) && parentID != 0 {
-	//	http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
-	//	return
-	//}
-	//gr := group{
-	//	Name:        name,
-	//	Description: description,
-	//	GroupID:     groupID,
-	//	ParentID:    parentID,
-	//}
-	//taskGroups = append(taskGroups, gr)
-	//err = json.NewEncoder(w).Encode(gr)
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
 	var gr group
 	err := json.NewDecoder(r.Body).Decode(&gr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if containsGroup(taskGroups, gr.GroupID) {
-		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
+	if gr.Name == "" {
+		http.Error(w, "400 name is not specified", http.StatusBadRequest)
 		return
 	}
 	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != 0 {
 		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
 		return
 	}
+	gr.GroupID = getMaxID(taskGroups) + 1
 	taskGroups = append(taskGroups, gr)
-	http.Redirect(w, r, "/groups/"+strconv.Itoa(gr.GroupID), http.StatusOK)
+	err = json.NewEncoder(w).Encode(gr)
+}
+
+func getMaxID(grs []group) int {
+	max := 0
+	for i := 0; i < len(grs); i++ {
+		if grs[i].GroupID > max {
+			max = grs[i].GroupID
+		}
+	}
+	return max
 }
 
 func getTasksByGroupID(t []task, id int) []task {
@@ -435,11 +365,6 @@ func getTasksByGroupID(t []task, id int) []task {
 }
 
 func tasksListHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "GET" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	l := r.URL.Query().Get("limit")
 	s := r.URL.Query().Get("sort")
 	t := r.URL.Query().Get("type")
@@ -533,12 +458,37 @@ func removeTask(ts []task, n int) []task {
 	return ts
 }
 
-func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "GET" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
+func newTaskHandler(w http.ResponseWriter, r *http.Request) {
+	var t task
+	err := json.NewDecoder(r.Body).Decode(&t)
+	if err != nil {
+		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if t.Task == "" {
+		http.Error(w, "400 task is not specified", http.StatusBadRequest)
+		return
+	}
+	if !containsGroup(taskGroups, t.GroupID) {
+		http.Error(w, "400 group with this ID does not exist", http.StatusBadRequest)
+		return
+	}
+	hash := sha1.New()
+	hash.Write([]byte(t.Task))
+	t.TaskID = hex.EncodeToString(hash.Sum(nil))[:5]
+	if containsTask(tasks, t.TaskID) {
+		http.Error(w, "400 task with this ID already exists", http.StatusBadRequest)
+		return
+	}
+	t.CreatedDate = time.Now().Format(time.RFC3339Nano)
+	tasks = append(tasks, t)
+	err = json.NewEncoder(w).Encode(t)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -568,17 +518,14 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func taskHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "PUT" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	vars := mux.Vars(r)
 	if !containsTask(tasks, vars["id"]) {
 		http.NotFound(w, r)
 		return
 	}
+	n := getTaskNumByID(tasks, vars["id"])
 	f := r.URL.Query().Get("finished")
+	var t task
 	var err error
 	switch f {
 	case "true":
@@ -586,6 +533,30 @@ func taskHandler(w http.ResponseWriter, r *http.Request) {
 	case "false":
 		tasks, err = changeTaskType(tasks, vars["id"], false)
 	case "":
+		err = json.NewDecoder(r.Body).Decode(&t)
+		if err != nil {
+			http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if t.Task == "" {
+			http.Error(w, "400 task is not specified", http.StatusBadRequest)
+			return
+		}
+		if !containsGroup(taskGroups, t.GroupID) {
+			http.Error(w, "400 group with this ID does not exist", http.StatusBadRequest)
+			return
+		}
+		hash := sha1.New()
+		hash.Write([]byte(t.Task))
+		t.TaskID = hex.EncodeToString(hash.Sum(nil))[:5]
+		if containsTask(tasks, t.TaskID) {
+			http.Error(w, "400 task with this ID already exists", http.StatusBadRequest)
+			return
+		}
+		t.Completed = tasks[n].Completed
+		t.CreatedDate = tasks[n].CreatedDate
+		t.CompletedDate = tasks[n].CompletedDate
+		tasks[n] = t
 	default:
 		http.Error(w, "400 bad request", http.StatusBadRequest)
 		return
@@ -594,22 +565,21 @@ func taskHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	t := getTask(tasks, vars["id"])
-	err = json.NewEncoder(w).Encode(t)
+	err = json.NewEncoder(w).Encode(tasks[n])
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func getTask(ts []task, id string) task {
-	var t task
+func getTaskNumByID(ts []task, id string) int {
+	var n int
 	for i := 0; i < len(ts); i++ {
 		if ts[i].TaskID == id {
-			t = ts[i]
+			n = i
 			break
 		}
 	}
-	return t
+	return n
 }
 
 func changeTaskType(ts []task, id string, t bool) ([]task, error) {
@@ -640,11 +610,6 @@ func containsTask(ts []task, id string) bool {
 }
 
 func statHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	if method != "GET" {
-		http.Error(w, "405 method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	vars := mux.Vars(r)
 	stat, err := getStat(tasks, vars["period"])
 	if err != nil {
@@ -705,31 +670,23 @@ func getStat(ts []task, period string) (statistics, error) {
 	return s, nil
 }
 
-var templates = template.Must(template.ParseFiles("groupEdit.html", "groupNew.html"))
-
-func renderTemplate(w http.ResponseWriter, tmpl string, g *group) {
-	err := templates.ExecuteTemplate(w, tmpl+".html", g)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 func main() {
 	var wait time.Duration
 	flag.DurationVar(&wait, "graceful-timeout", time.Second*15, "the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
 	flag.Parse()
 	r := mux.NewRouter()
-	r.HandleFunc("/groups", groupsListHandler)
-	r.HandleFunc("/groups/top_parents", topParentsHandler)
-	r.HandleFunc("/groups/children/{id:[0-9]+}", groupsChildrenHandler)
-	r.HandleFunc("/groups/new", newGroupHandler)
-	r.HandleFunc("/groups/{id:[0-9]+}", groupsHandler)
-	r.HandleFunc("/groups/new/save", saveNewGroupHandler)
-	r.HandleFunc("/groups/save", saveEditedGroupHandler)
-	r.HandleFunc("/tasks", tasksListHandler)
-	r.HandleFunc("/tasks/group/{id:[0-9]+}", groupTasksHandler)
-	r.HandleFunc("/tasks/{id:[a-zA-Z0-9]+}", taskHandler)
-	r.HandleFunc("/stat/{period}", statHandler)
+	r.HandleFunc("/groups", groupsListHandler).Methods("GET")
+	r.HandleFunc("/groups/top_parents", topParentsHandler).Methods("GET")
+	r.HandleFunc("/groups/children/{id:[0-9]+}", groupsChildrenHandler).Methods("GET")
+	r.HandleFunc("/groups/new", newGroupHandler).Methods("POST")
+	r.HandleFunc("/groups/{id:[0-9]+}", groupShowHandler).Methods("GET")
+	r.HandleFunc("/groups/{id:[0-9]+}", groupEditHandler).Methods("PUT")
+	r.HandleFunc("/groups/{id:[0-9]+}", groupDeleteHandler).Methods("DELETE")
+	r.HandleFunc("/tasks", tasksListHandler).Methods("GET")
+	r.HandleFunc("/tasks/new", newTaskHandler).Methods("POST")
+	r.HandleFunc("/tasks/group/{id:[0-9]+}", groupTasksHandler).Methods("GET")
+	r.HandleFunc("/tasks/{id:[a-zA-Z0-9]+}", taskHandler).Methods("PUT")
+	r.HandleFunc("/stat/{period}", statHandler).Methods("GET")
 	http.Handle("/", r)
 	srv := &http.Server{
 		Addr:         "0.0.0.0:8080",
