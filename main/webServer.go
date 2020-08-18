@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
+	"github.com/spf13/viper"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -42,6 +43,19 @@ type statistics struct {
 var taskGroups = readGroups()
 
 var tasks = readTasks()
+
+var config = getConfig()
+
+func getConfig() *viper.Viper {
+	config := viper.New()
+	config.SetConfigName("config")
+	config.AddConfigPath(".")
+	err := config.ReadInConfig()
+	if err != nil {
+		panic(fmt.Errorf("Fatal error config file: %s \n", err))
+	}
+	return config
+}
 
 func readGroups() []group {
 	groupsFile, err := ioutil.ReadFile("groups.json")
@@ -115,7 +129,7 @@ func getSortedGroups(g []group, s string, l string) []group {
 	}
 	lim, err := strconv.Atoi(l)
 	if err != nil || lim < 0 {
-		return g
+		lim = config.GetInt("Groups.limit")
 	}
 	if lim > len(g) {
 		lim = len(g)
@@ -184,7 +198,11 @@ func topParentsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	topParents = sortGroupsByName(topParents, 0, len(topParents))
-	err := json.NewEncoder(w).Encode(topParents)
+	lim := config.GetInt("Groups.limit")
+	if lim > len(topParents) {
+		lim = len(topParents)
+	}
+	err := json.NewEncoder(w).Encode(topParents[:lim])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -202,7 +220,11 @@ func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "400 has no children", http.StatusBadRequest)
 		return
 	}
-	err = json.NewEncoder(w).Encode(children)
+	lim := config.GetInt("Groups.limit")
+	if lim > len(children) {
+		lim = len(children)
+	}
+	err = json.NewEncoder(w).Encode(children[:lim])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -255,6 +277,7 @@ func groupEditHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	if containsGroup(taskGroups, gr.GroupID) && gr.GroupID != ID {
 		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
 		return
@@ -338,7 +361,10 @@ func newGroupHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "400 name is not specified", http.StatusBadRequest)
 		return
 	}
-	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != 0 {
+	if gr.ParentID == 0 {
+		gr.ParentID = config.GetInt("Groups.default_parent")
+	}
+	if !containsGroup(taskGroups, gr.ParentID) {
 		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
 		return
 	}
@@ -475,13 +501,17 @@ func newTaskHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "400 task is not specified", http.StatusBadRequest)
 		return
 	}
+	if t.GroupID == 0 {
+		t.GroupID = config.GetInt("Tasks.default_group")
+	}
 	if !containsGroup(taskGroups, t.GroupID) {
 		http.Error(w, "400 group with this ID does not exist", http.StatusBadRequest)
 		return
 	}
+	idLim := config.GetInt("Tasks.tasks_length")
 	hash := sha1.New()
 	hash.Write([]byte(t.Task))
-	t.TaskID = hex.EncodeToString(hash.Sum(nil))[:5]
+	t.TaskID = hex.EncodeToString(hash.Sum(nil))[:idLim]
 	if containsTask(tasks, t.TaskID) {
 		http.Error(w, "400 task with this ID already exists", http.StatusBadRequest)
 		return
@@ -677,6 +707,7 @@ func getStat(ts []task, period string) (statistics, error) {
 }
 
 func main() {
+	port := config.GetString("Application.Port")
 	var wait time.Duration
 	flag.DurationVar(&wait, "graceful-timeout", time.Second*15, "the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
 	flag.Parse()
@@ -695,7 +726,7 @@ func main() {
 	r.HandleFunc("/stat/{period}", statHandler).Methods("GET")
 	http.Handle("/", r)
 	srv := &http.Server{
-		Addr:         "0.0.0.0:8080",
+		Addr:         "0.0.0.0:" + port,
 		WriteTimeout: time.Second * 15,
 		ReadTimeout:  time.Second * 15,
 		IdleTimeout:  time.Second * 60,
