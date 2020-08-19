@@ -9,9 +9,10 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"io/ioutil"
-	"log"
+	//"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -52,7 +53,7 @@ func getConfig() *viper.Viper {
 	config.AddConfigPath(".")
 	err := config.ReadInConfig()
 	if err != nil {
-		panic(fmt.Errorf("Fatal error config file: %s \n", err))
+		log.Fatal(fmt.Errorf("Fatal error config file: %s \n", err))
 	}
 	return config
 }
@@ -106,13 +107,18 @@ func writeTasks(ts []task) {
 }
 
 func groupsListHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	l := r.URL.Query().Get("limit")
 	s := r.URL.Query().Get("sort")
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "params": log.Fields{"limit": l, "sort": s}, "body": r.Body}).Info("groupsListHandler started")
 	newGroups := getSortedGroups(taskGroups, s, l)
 	err := json.NewEncoder(w).Encode(newGroups)
+	end := time.Now()
+	execTime := end.Sub(start).Nanoseconds()
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time(ns)": execTime}).Fatal("groupsListHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time(ns)": execTime}).Info("groupsListHandler ended")
 }
 
 func getSortedGroups(g []group, s string, l string) []group {
@@ -191,6 +197,8 @@ func containsGroup(grs []group, id int) bool {
 }
 
 func topParentsHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("topParentsHandler started")
 	var topParents []group
 	for i := 0; i < len(taskGroups); i++ {
 		if taskGroups[i].ParentID == 0 {
@@ -203,12 +211,17 @@ func topParentsHandler(w http.ResponseWriter, r *http.Request) {
 		lim = len(topParents)
 	}
 	err := json.NewEncoder(w).Encode(topParents[:lim])
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("topParentsHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("topParentsHandler ended")
 }
 
 func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("groupsChildrenHandler started")
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -225,9 +238,12 @@ func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
 		lim = len(children)
 	}
 	err = json.NewEncoder(w).Encode(children[:lim])
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("groupsChildrenHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("groupsChildrenHandler ended")
 }
 
 func getChildren(grs []group, id int) []group {
@@ -252,6 +268,8 @@ func getGroup(grs []group, id int) group {
 }
 
 func groupShowHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("groupShowHandler started")
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -259,12 +277,17 @@ func groupShowHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = json.NewEncoder(w).Encode(getGroup(taskGroups, ID))
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("groupShowHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("groupShowHandler ended")
 }
 
 func groupEditHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("groupEditHandler started")
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -277,7 +300,6 @@ func groupEditHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
 	if containsGroup(taskGroups, gr.GroupID) && gr.GroupID != ID {
 		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
 		return
@@ -297,9 +319,12 @@ func groupEditHandler(w http.ResponseWriter, r *http.Request) {
 	n := getGroupNumByID(taskGroups, ID)
 	taskGroups[n] = gr
 	err = json.NewEncoder(w).Encode(gr)
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("groupEditHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("groupEditHandler ended")
 }
 
 func getGroupNumByID(grs []group, id int) int {
@@ -314,6 +339,8 @@ func getGroupNumByID(grs []group, id int) int {
 }
 
 func groupDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("groupDeleteHandler started")
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -323,12 +350,15 @@ func groupDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	taskGroups, err = removeGroup(taskGroups, ID)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
-	} else {
-		_, err = fmt.Fprint(w, "group deleted")
-		if err != nil {
-			log.Fatal(err)
-		}
+		return
 	}
+	_, err = fmt.Fprint(w, "group deleted")
+	end := time.Now()
+	execTime := end.Sub(start)
+	if err != nil {
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("groupDeleteHandler ended: " + err.Error())
+	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("groupDeleteHandler ended")
 }
 
 func removeGroup(grs []group, id int) ([]group, error) {
@@ -351,6 +381,8 @@ func removeGroup(grs []group, id int) ([]group, error) {
 }
 
 func newGroupHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("newGroupHandler started")
 	var gr group
 	err := json.NewDecoder(r.Body).Decode(&gr)
 	if err != nil {
@@ -361,19 +393,23 @@ func newGroupHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "400 name is not specified", http.StatusBadRequest)
 		return
 	}
+	defParID := config.GetInt("Groups.default_parent")
 	if gr.ParentID == 0 {
-		gr.ParentID = config.GetInt("Groups.default_parent")
+		gr.ParentID = defParID
 	}
-	if !containsGroup(taskGroups, gr.ParentID) {
+	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != defParID {
 		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
 		return
 	}
 	gr.GroupID = getMaxID(taskGroups) + 1
 	taskGroups = append(taskGroups, gr)
 	err = json.NewEncoder(w).Encode(gr)
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("newGroupHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("newGroupHandler ended")
 }
 
 func getMaxID(grs []group) int {
@@ -397,14 +433,19 @@ func getTasksByGroupID(t []task, id int) []task {
 }
 
 func tasksListHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	l := r.URL.Query().Get("limit")
 	s := r.URL.Query().Get("sort")
 	t := r.URL.Query().Get("type")
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "params": log.Fields{"limit": l, "sort": s, "type": t}, "body": r.Body}).Info("tasksListHandler started")
 	newTasks := getSortedTasks(tasks, s, l, t)
 	err := json.NewEncoder(w).Encode(newTasks)
+	end := time.Now()
+	execTime := end.Sub(start).Nanoseconds()
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time(ns)": execTime}).Fatal("tasksListHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time(ns)": execTime}).Info("tasksListHandler ended")
 }
 
 func getSortedTasks(ts []task, s string, l string, t string) []task {
@@ -491,6 +532,8 @@ func removeTask(ts []task, n int) []task {
 }
 
 func newTaskHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("newTaskHandler started")
 	var t task
 	err := json.NewDecoder(r.Body).Decode(&t)
 	if err != nil {
@@ -519,12 +562,17 @@ func newTaskHandler(w http.ResponseWriter, r *http.Request) {
 	t.CreatedDate = time.Now().Format(time.RFC3339Nano)
 	tasks = append(tasks, t)
 	err = json.NewEncoder(w).Encode(t)
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("newTaskHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("newTaskHandler ended")
 }
 
 func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("groupTasksHandler started")
 	vars := mux.Vars(r)
 	ID, err := strconv.Atoi(vars["id"])
 	if err != nil || !containsGroup(taskGroups, ID) {
@@ -548,12 +596,16 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = json.NewEncoder(w).Encode(newTasks)
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("groupTasksHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("groupTasksHandler ended")
 }
 
 func taskHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	vars := mux.Vars(r)
 	if !containsTask(tasks, vars["id"]) {
 		http.NotFound(w, r)
@@ -561,6 +613,7 @@ func taskHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	n := getTaskNumByID(tasks, vars["id"])
 	f := r.URL.Query().Get("finished")
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("taskHandler started")
 	var t task
 	var err error
 	switch f {
@@ -602,9 +655,12 @@ func taskHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = json.NewEncoder(w).Encode(tasks[n])
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("taskHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("taskHandler ended")
 }
 
 func getTaskNumByID(ts []task, id string) int {
@@ -646,6 +702,8 @@ func containsTask(ts []task, id string) bool {
 }
 
 func statHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	log.WithFields(log.Fields{"method": r.Method, "url": r.URL.String(), "body": r.Body}).Info("statHandler started")
 	vars := mux.Vars(r)
 	stat, err := getStat(tasks, vars["period"])
 	if err != nil {
@@ -653,9 +711,12 @@ func statHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = json.NewEncoder(w).Encode(stat)
+	end := time.Now()
+	execTime := end.Sub(start)
 	if err != nil {
-		log.Fatal(err)
+		log.WithFields(log.Fields{"execution time": execTime}).Fatal("statHandler ended: " + err.Error())
 	}
+	log.WithFields(log.Fields{"execution time": execTime}).Info("statHandler ended")
 }
 
 func getStat(ts []task, period string) (statistics, error) {
@@ -707,6 +768,7 @@ func getStat(ts []task, period string) (statistics, error) {
 }
 
 func main() {
+	log.SetOutput(os.Stdout)
 	port := config.GetString("Application.Port")
 	var wait time.Duration
 	flag.DurationVar(&wait, "graceful-timeout", time.Second*15, "the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
