@@ -45,9 +45,9 @@ var taskGroups = readGroups()
 
 var tasks = readTasks()
 
-var config = getConfig()
+var config = readConfig()
 
-func getConfig() *viper.Viper {
+func readConfig() *viper.Viper {
 	config := viper.New()
 	config.SetConfigName("config")
 	config.AddConfigPath(".")
@@ -55,6 +55,7 @@ func getConfig() *viper.Viper {
 	if err != nil {
 		log.Fatal(fmt.Errorf("Fatal error config file: %s \n", err))
 	}
+	log.Info("config successfully read")
 	return config
 }
 
@@ -68,6 +69,7 @@ func readGroups() []group {
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Info("groups successfully read")
 	return groups
 }
 
@@ -80,6 +82,7 @@ func writeGroups(grs []group) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Info("groups successfully wrote")
 }
 
 func readTasks() []task {
@@ -231,6 +234,7 @@ func groupsChildrenHandler(w http.ResponseWriter, r *http.Request) {
 	children := getChildren(taskGroups, ID)
 	if children == nil {
 		http.Error(w, "400 has no children", http.StatusBadRequest)
+		log.WithField("Group ID: ", ID).Warn("Group has no children.")
 		return
 	}
 	lim := config.GetInt("Groups.limit")
@@ -298,22 +302,27 @@ func groupEditHandler(w http.ResponseWriter, r *http.Request) {
 	err = json.NewDecoder(r.Body).Decode(&gr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Error("Decoding group from request body: ", err.Error())
 		return
 	}
 	if containsGroup(taskGroups, gr.GroupID) && gr.GroupID != ID {
 		http.Error(w, "400 group with this ID already exists", http.StatusBadRequest)
+		log.WithField("Group ID: ", ID).Warn("Group already exists.")
 		return
 	}
 	if getChildren(taskGroups, ID) != nil && gr.GroupID != ID {
 		http.Error(w, "400 has dependent groups", http.StatusBadRequest)
+		log.WithField("Group ID: ", ID).Warn("Group has dependent groups.")
 		return
 	}
 	if getTasksByGroupID(tasks, ID) != nil && gr.GroupID != ID {
 		http.Error(w, "400 has dependent tasks", http.StatusBadRequest)
+		log.WithField("Group ID: ", ID).Warn("Group has dependent tasks.")
 		return
 	}
 	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != 0 {
 		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
+		log.WithField("Parent ID: ", ID).Warn("Parent does not exist.")
 		return
 	}
 	n := getGroupNumByID(taskGroups, ID)
@@ -350,6 +359,7 @@ func groupDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	taskGroups, err = removeGroup(taskGroups, ID)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
+		log.Warn(fmt.Sprintf("Group %s.", err.Error()))
 		return
 	}
 	_, err = fmt.Fprint(w, "group deleted")
@@ -387,10 +397,12 @@ func newGroupHandler(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&gr)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Error("Decoding group from request body: ", err.Error())
 		return
 	}
 	if gr.Name == "" {
 		http.Error(w, "400 name is not specified", http.StatusBadRequest)
+		log.Error("Group name is not specified.")
 		return
 	}
 	defParID := config.GetInt("Groups.default_parent")
@@ -399,6 +411,7 @@ func newGroupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != defParID {
 		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
+
 		return
 	}
 	gr.GroupID = getMaxID(taskGroups) + 1
