@@ -139,6 +139,7 @@ func getSortedGroups(g []group, s string, l string) []group {
 	lim, err := strconv.Atoi(l)
 	if err != nil || lim < 0 {
 		lim = config.GetInt("Groups.limit")
+
 	}
 	if lim > len(g) {
 		lim = len(g)
@@ -369,6 +370,7 @@ func groupDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		log.WithFields(log.Fields{"execution time": execTime}).Fatal("groupDeleteHandler ended: " + err.Error())
 	}
 	log.WithFields(log.Fields{"execution time": execTime}).Info("groupDeleteHandler ended")
+	log.Infoln()
 }
 
 func removeGroup(grs []group, id int) ([]group, error) {
@@ -408,10 +410,11 @@ func newGroupHandler(w http.ResponseWriter, r *http.Request) {
 	defParID := config.GetInt("Groups.default_parent")
 	if gr.ParentID == 0 {
 		gr.ParentID = defParID
+		log.Warn("Parent ID is not specified. Default parent ID used.")
 	}
 	if !containsGroup(taskGroups, gr.ParentID) && gr.ParentID != defParID {
 		http.Error(w, "400 parent with this ID does not exist", http.StatusBadRequest)
-
+		log.Error("Parent does not exist.")
 		return
 	}
 	gr.GroupID = getMaxID(taskGroups) + 1
@@ -551,17 +554,21 @@ func newTaskHandler(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&t)
 	if err != nil {
 		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
+		log.Error("Decoding task from request body: ", err.Error())
 		return
 	}
 	if t.Task == "" {
 		http.Error(w, "400 task is not specified", http.StatusBadRequest)
+		log.Error("Task is not specified.")
 		return
 	}
 	if t.GroupID == 0 {
 		t.GroupID = config.GetInt("Tasks.default_group")
+		log.Warn("Group ID is not specified. Default group ID used.")
 	}
 	if !containsGroup(taskGroups, t.GroupID) {
 		http.Error(w, "400 group with this ID does not exist", http.StatusBadRequest)
+		log.Error("Group does not exist.")
 		return
 	}
 	idLim := config.GetInt("Tasks.tasks_length")
@@ -570,6 +577,7 @@ func newTaskHandler(w http.ResponseWriter, r *http.Request) {
 	t.TaskID = hex.EncodeToString(hash.Sum(nil))[:idLim]
 	if containsTask(tasks, t.TaskID) {
 		http.Error(w, "400 task with this ID already exists", http.StatusBadRequest)
+		log.Error("Task already exists.")
 		return
 	}
 	t.CreatedDate = time.Now().Format(time.RFC3339Nano)
@@ -595,6 +603,7 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 	newTasks := getTasksByGroupID(tasks, ID)
 	if newTasks == nil {
 		http.Error(w, "400 has no dependent tasks", http.StatusBadRequest)
+		log.Error("Group has no dependent tasks")
 		return
 	}
 	t := r.URL.Query().Get("type")
@@ -606,6 +615,7 @@ func groupTasksHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(newTasks) == 0 {
 		http.Error(w, "400 has no dependent tasks of this type", http.StatusBadRequest)
+		log.Error("Group has no dependent tasks of this type")
 		return
 	}
 	err = json.NewEncoder(w).Encode(newTasks)
@@ -638,14 +648,17 @@ func taskHandler(w http.ResponseWriter, r *http.Request) {
 		err = json.NewDecoder(r.Body).Decode(&t)
 		if err != nil {
 			http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
+			log.Error("Decoding task from request body: ", err.Error())
 			return
 		}
 		if t.Task == "" {
 			http.Error(w, "400 task is not specified", http.StatusBadRequest)
+			log.Error("Task is not specified.")
 			return
 		}
 		if !containsGroup(taskGroups, t.GroupID) {
 			http.Error(w, "400 group with this ID does not exist", http.StatusBadRequest)
+			log.Error("Group does not exist.")
 			return
 		}
 		hash := sha1.New()
@@ -661,10 +674,12 @@ func taskHandler(w http.ResponseWriter, r *http.Request) {
 		tasks[n] = t
 	default:
 		http.Error(w, "400 bad request", http.StatusBadRequest)
+		log.Error("Invalid query.")
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "400 "+err.Error(), http.StatusBadRequest)
+		log.Error("Task is ", err.Error())
 		return
 	}
 	err = json.NewEncoder(w).Encode(tasks[n])
@@ -691,7 +706,7 @@ func changeTaskType(ts []task, id string, t bool) ([]task, error) {
 	for i := 0; i < len(ts); i++ {
 		if ts[i].TaskID == id {
 			if t == ts[i].Completed {
-				return ts, errors.New("400 already of this type")
+				return ts, errors.New("already of this type")
 			}
 			ts[i].Completed = t
 			if t {
